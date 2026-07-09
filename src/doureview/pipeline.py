@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 
 from .diff_parser import DiffParser, DiffMode
@@ -23,6 +24,8 @@ class Pipeline:
         report_path = pipeline.run()
         # 指定范围
         report_path = pipeline.run(base="main", head="feature/xxx")
+        # 流式输出到终端
+        report_path = pipeline.run(on_chunk=lambda c: print(c, end="", flush=True))
     """
 
     def __init__(
@@ -41,7 +44,7 @@ class Pipeline:
         self,
         base: str | None = None,
         head: str | None = None,
-        stream: bool = True,
+        on_chunk: Callable[[str], None] | None = None,
     ) -> Path:
         """
         执行完整的审查流程。
@@ -54,13 +57,14 @@ class Pipeline:
         Args:
             base: 可选，diff 范围的起点（如 "main"）
             head: 可选，diff 范围的终点（如 "HEAD"）
-            stream: True 时流式输出到终端
+            on_chunk: 可选，流式回调。传入时使用流式调用，每收到一个文本块即回调；
+                      不传时使用普通调用，直接返回完整响应。
 
         Returns:
             报告文件路径
         """
         # 1. 解析 diff
-        if base and head:
+        if base is not None and head is not None:
             diff = self.diff_parser.parse(DiffMode.COMMITTED, base=base, head=head)
         else:
             # 默认：审查所有未提交的改动
@@ -70,14 +74,12 @@ class Pipeline:
         prompt = self.prompt_builder.build(diff)
 
         # 3. 调用 LLM
-        if stream:
-            print("\n--- 审查中 ---\n")
-            response_parts: list[str] = []
+        if on_chunk is not None:
+            parts: list[str] = []
             for chunk in self.llm_client.stream(prompt):
-                print(chunk, end="", flush=True)
-                response_parts.append(chunk)
-            response = "".join(response_parts)
-            print("\n")
+                on_chunk(chunk)
+                parts.append(chunk)
+            response = "".join(parts)
         else:
             response = self.llm_client.invoke(prompt)
 

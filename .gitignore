@@ -1,5 +1,6 @@
 # ═══ 敏感配置 ═══
 .env
+!.env.example
 
 # ═══ IDE ═══
 .idea/
@@ -30,4 +31,4 @@ htmlcov/
 .DS_Store
 
 # ═══ 本地输出 ═══
-dourevew/
+/doureview/

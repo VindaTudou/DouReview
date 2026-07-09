@@ -1,9 +1,9 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
-name = "dourevew"
+name = "doureview"
 version = "0.1.0"
 description = "AI-powered code review agent for personal developers"
 requires-python = ">=3.11"
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dourevew = "doureview.cli:main"
+doureview = "doureview.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -23,5 +23,8 @@ dev = [
     "pytest-mock>=3.12",
 ]
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/doureview"]
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+doureview = [".env", ".env.example"]

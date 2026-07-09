@@ -41,7 +41,16 @@ def review(
     )
 
     try:
-        report_path = pipeline.run(base=base, head=head, stream=not Config.QUIET)
+        if Config.QUIET:
+            report_path = pipeline.run(base=base, head=head)
+        else:
+            typer.echo("\n--- 审查中 ---\n")
+            report_path = pipeline.run(
+                base=base,
+                head=head,
+                on_chunk=lambda c: typer.echo(c, nl=False),
+            )
+            typer.echo("\n")
         typer.echo(f"\n✅ Review report: {report_path}")
     except Exception as e:
         typer.echo(f"\n❌ {e}", err=True)
