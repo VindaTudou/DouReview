@@ -1,0 +1,86 @@
+from pathlib import Path
+
+from .diff_parser import DiffParser, DiffMode
+from .prompt_builder import PromptBuilder
+from .llm_client import LLMClient
+from .report_generator import ReportGenerator
+
+
+class Pipeline:
+    """
+    编排审查流程。
+
+    默认审查工作区所有改动（git diff HEAD），不分暂存/未暂存。
+
+    用法:
+        pipeline = Pipeline(
+            diff_parser=DiffParser(),
+            prompt_builder=PromptBuilder(),
+            llm_client=LLMClient(),
+            report_generator=ReportGenerator(),
+        )
+        # 默认：审查所有未提交的改动
+        report_path = pipeline.run()
+        # 指定范围
+        report_path = pipeline.run(base="main", head="feature/xxx")
+    """
+
+    def __init__(
+        self,
+        diff_parser: DiffParser,
+        prompt_builder: PromptBuilder,
+        llm_client: LLMClient,
+        report_generator: ReportGenerator,
+    ) -> None:
+        self.diff_parser = diff_parser
+        self.prompt_builder = prompt_builder
+        self.llm_client = llm_client
+        self.report_generator = report_generator
+
+    def run(
+        self,
+        base: str | None = None,
+        head: str | None = None,
+        stream: bool = True,
+    ) -> Path:
+        """
+        执行完整的审查流程。
+
+        默认模式（base 和 head 均为 None）：
+          审查工作区所有未提交的改动
+        指定范围模式：
+          审查两个引用之间的改动
+
+        Args:
+            base: 可选，diff 范围的起点（如 "main"）
+            head: 可选，diff 范围的终点（如 "HEAD"）
+            stream: True 时流式输出到终端
+
+        Returns:
+            报告文件路径
+        """
+        # 1. 解析 diff
+        if base and head:
+            diff = self.diff_parser.parse(DiffMode.COMMITTED, base=base, head=head)
+        else:
+            # 默认：审查所有未提交的改动
+            diff = self.diff_parser.parse(DiffMode.UNSTAGED)
+
+        # 2. 构建 prompt
+        prompt = self.prompt_builder.build(diff)
+
+        # 3. 调用 LLM
+        if stream:
+            print("\n--- 审查中 ---\n")
+            response_parts: list[str] = []
+            for chunk in self.llm_client.stream(prompt):
+                print(chunk, end="", flush=True)
+                response_parts.append(chunk)
+            response = "".join(response_parts)
+            print("\n")
+        else:
+            response = self.llm_client.invoke(prompt)
+
+        # 4. 生成报告
+        report_path = self.report_generator.generate(response, diff)
+        return report_path

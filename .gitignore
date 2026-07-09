@@ -1,0 +1,33 @@
+# ═══ 敏感配置 ═══
+.env
+
+# ═══ IDE ═══
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ═══ Claude ═══
+.claude/
+
+# ═══ Python ═══
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# ═══ 测试 & 覆盖率 ═══
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ═══ macOS ═══
+.DS_Store
+
+# ═══ 本地输出 ═══
+dourevew/
