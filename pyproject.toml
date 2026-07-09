@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dourevew = "dourevew.cli:main"
+dourevew = "doureview.cli:main"
 
 [project.optional-dependencies]
 dev = [

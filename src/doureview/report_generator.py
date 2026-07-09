@@ -177,11 +177,26 @@ class ReportGenerator:
 
     @staticmethod
     def _extract_after_colon(text: str) -> str:
-        """提取冒号后的内容。"""
-        for sep in ["：** ", "：**", "** ", ": ** ", ": **", ":** ", ":**"]:
+        """提取冒号后的内容。处理 LLM 输出的各种格式变体。"""
+        # 精确匹配已知模式（按长度降序，先匹配长的避免短的前缀误匹配）
+        prefixes = [
+            "**问题**：** ", "**问题**: ** ", "**建议**：** ", "**建议**: ** ",
+            "**问题：** ** ", "**建议：** ** ",
+            "**问题**：", "**问题**：** ", "**问题**: ", "**问题**:",
+            "**建议**：", "**建议**：** ", "**建议**: ", "**建议**:",
+            "**问题：** ", "**问题：**", "**建议：** ", "**建议：**",
+        ]
+        for prefix in sorted(prefixes, key=len, reverse=True):
+            if text.startswith(prefix):
+                return text[len(prefix):].strip()
+        # 通用提取：找第一个冒号后的内容
+        for sep in ["：", ": "]:
             idx = text.find(sep)
             if idx != -1:
-                return text[idx + len(sep):].strip()
+                after = text[idx + len(sep):].lstrip()
+                while after.startswith("** "):
+                    after = after[3:].lstrip()
+                return after
         return text.strip()
 
     @staticmethod

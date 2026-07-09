@@ -94,7 +94,6 @@ class DiffParser:
         lines_deleted = 0
 
         # 从 diff --git header 行作为 fallback 提取路径
-        # raw_section 格式: a/old_path b/new_path\n...
         if lines and lines[0].startswith("a/"):
             parts = lines[0].split(" ", 1)
             if len(parts) == 2 and parts[1].startswith("b/"):
