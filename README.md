@@ -109,7 +109,7 @@ pytest tests/ -v
 git diff ──▶ Prompt 构造 ──▶ LLM 调用 ──▶ Report 生成
 ```
 
-详细设计见 [docs/design.md](docs/design.md) 和 [docs/architecture.md](docs/architecture.md)。
+详细设计见 [docs/design.md](docs/V1-design.md) 和 [docs/architecture.md](docs/V1-architecture.md)。
 
 ## License
 

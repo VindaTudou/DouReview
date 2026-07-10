@@ -47,7 +47,7 @@ class PromptBuilder:
 
     def build(self, diff: DiffResult) -> Prompt:
         """将 diff 数据注入 prompt 模板。"""
-        system = self._system_prompt()
+        system = self._system_prompt() + self._tool_usage_instructions()
         user = self._user_prompt(diff)
         return Prompt(system=system, user=user)
 
@@ -63,16 +63,34 @@ class PromptBuilder:
         note = severity_notes.get(self.severity, "")
         return SYSTEM_PROMPT + f"\n\n审查严格程度：{note}"
 
+    @staticmethod
+    def _tool_usage_instructions() -> str:
+        """工具使用指引，追加到 system prompt 末尾。"""
+        return """
+## 可用工具
+
+在审查过程中，你可以使用以下工具来探索代码库、理解项目上下文。请根据实际需要调用，不要为了调用而调用。
+
+工具列表：
+- `list_dir(path?)` — 浏览目录结构，了解项目组织
+- `read_file(path)` — 读取文件完整内容（包括文档和源码）
+- `read_symbol(file, symbol_name)` — 读取 Python 文件中指定函数/类的完整源码。优先使用此工具而非 read_file（节省 token）
+- `search(pattern, path?)` — 在项目中搜索代码模式（grep），用于查找引用、调用关系等
+
+使用原则：
+1. 审查开始前，建议先浏览项目结构（list_dir），了解项目组织
+2. 如果有项目文档（README.md、docs/ 目录等），建议先阅读以理解项目架构和设计决策
+3. 对 diff 中涉及的函数/类，使用 read_symbol 查看完整实现，而非 read_file
+4. 只探索与 diff 真正相关的文件和符号，不要漫无目的地浏览
+5. 搜索预算有限，优先用 read_symbol 定位后再用 search 查调用关系
+"""
+
     def _user_prompt(self, diff: DiffResult) -> str:
         """构建 user prompt —— 包含 diff 内容和输出格式要求。"""
         parts: list[str] = []
         parts.append("请审查以下代码变更：\n")
 
         if diff.is_truncated:
-            parts.append(
-                "⚠️ 注意：diff 内容超过行数上限，已被截断。"
-                "以下审查仅覆盖前 {} 行变更。\n".format(self._format_diff.__code__.co_argcount)
-            )
             parts.append("⚠️ 注意：diff 内容超过行数上限，已被截断。\n")
 
         if diff.base and diff.head:

@@ -5,6 +5,7 @@ from .diff_parser import DiffParser, DiffMode
 from .prompt_builder import PromptBuilder
 from .llm_client import LLMClient
 from .report_generator import ReportGenerator
+from .tools import ToolRegistry
 
 
 class Pipeline:
@@ -34,17 +35,20 @@ class Pipeline:
         prompt_builder: PromptBuilder,
         llm_client: LLMClient,
         report_generator: ReportGenerator,
+        tool_registry: ToolRegistry | None = None,
     ) -> None:
         self.diff_parser = diff_parser
         self.prompt_builder = prompt_builder
         self.llm_client = llm_client
         self.report_generator = report_generator
+        self.tool_registry = tool_registry
 
     def run(
         self,
         base: str | None = None,
         head: str | None = None,
         on_chunk: Callable[[str], None] | None = None,
+        logger: "VerboseLogger | None" = None,
     ) -> Path:
         """
         执行完整的审查流程。
@@ -74,13 +78,21 @@ class Pipeline:
         prompt = self.prompt_builder.build(diff)
 
         # 3. 调用 LLM
-        if on_chunk is not None:
+        if self.tool_registry is not None:
+            # V2: Agent 循环
+            self.tool_registry.register_all()
+            self.tool_registry.set_budgets(read_file=15, search=20)
+            tools = self.tool_registry.definitions()
+            response = self.llm_client.chat(prompt, tools, self.tool_registry, on_chunk=on_chunk, logger=logger)
+        elif on_chunk is not None:
+            # V1 fallback: 流式
             parts: list[str] = []
             for chunk in self.llm_client.stream(prompt):
                 on_chunk(chunk)
                 parts.append(chunk)
             response = "".join(parts)
         else:
+            # V1 fallback: 阻塞
             response = self.llm_client.invoke(prompt)
 
         # 4. 生成报告

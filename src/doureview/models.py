@@ -78,6 +78,34 @@ class Prompt:
 
 
 # ═══════════════════════════════════════════════
+# Agent / Tool 阶段（V2 新增）
+# ═══════════════════════════════════════════════
+
+@dataclass
+class ToolCall:
+    """LLM 请求调用一个工具"""
+    id: str                     # tool_use 的唯一 ID，用于回传 tool_result
+    name: str                   # 工具名称，如 "read_file"
+    arguments: dict[str, object]  # 工具参数，如 {"path": "src/main.py"}
+
+
+@dataclass
+class ToolResult:
+    """工具执行结果，回传给 LLM"""
+    tool_call_id: str           # 对应 ToolCall.id
+    name: str                   # 工具名称
+    content: str                # 执行结果文本（成功时是文件/源码内容，失败时是错误描述）
+
+
+@dataclass
+class ToolDefinition:
+    """工具定义（中性格式，同时支持 Anthropic 和 OpenAI）"""
+    name: str
+    description: str
+    parameters: dict            # JSON Schema 对象，如 {"type": "object", "properties": {...}, "required": [...]}
+
+
+# ═══════════════════════════════════════════════
 # Report 阶段
 # ═══════════════════════════════════════════════
 

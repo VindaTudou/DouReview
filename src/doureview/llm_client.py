@@ -1,12 +1,12 @@
+import json
 import time
-from typing import Iterator
-
+from collections.abc import Callable, Iterator
 from anthropic import Anthropic, APIStatusError, APITimeoutError, RateLimitError, AuthenticationError
 from openai import OpenAI, APIStatusError as OAIStatusError, APITimeoutError as OAITimeoutError
 from openai import RateLimitError as OAIRateLimitError
 from openai import AuthenticationError as OAIAuthenticationError
 
-from .models import Prompt
+from .models import Prompt, ToolCall, ToolResult, ToolDefinition
 from .errors import LLMError, LLMAuthError, LLMRateLimitError
 
 
@@ -85,6 +85,224 @@ class LLMClient:
                 yield from self._stream_openai(prompt)
         except Exception as e:
             raise self._wrap_error(e)
+
+    def chat(
+        self,
+        prompt: Prompt,
+        tools: list[ToolDefinition],
+        tool_registry: ToolRegistry,
+        max_turns: int = 40,
+        on_chunk: Callable[[str], None] | None = None,
+        logger: "VerboseLogger | None" = None,
+    ) -> str:
+        """
+        Agent 循环 —— 多轮 tool-calling 对话，带分类预算和自适应退出。
+
+        用法:
+            response = client.chat(prompt, tools, tool_registry, on_chunk=lambda c: print(c, end=""))
+        """
+
+        # 初始化对话
+        messages: list[dict] = []
+        # system 消息
+        if self.provider == "anthropic":
+            # Anthropic 的 system 在顶层，不在 messages 里
+            system_content = prompt.system
+        else:
+            messages.append({"role": "system", "content": prompt.system})
+            system_content = ""
+
+        # user 消息
+        messages.append({"role": "user", "content": prompt.user})
+
+        collected_texts: list[str] = []
+
+        for _ in range(max_turns):
+            body = self._build_chat_request_body(messages, tools, system_content)
+            response = self._send_chat_request(body)
+            text, tool_calls = self._parse_chat_response(response)
+
+            if text:
+                collected_texts.append(text)
+                if on_chunk:
+                    on_chunk(text)
+
+            # 将 assistant 响应追加到对话历史
+            if self.provider == "anthropic":
+                assistant_content = []
+                if text:
+                    assistant_content.append({"type": "text", "text": text})
+                for tc in tool_calls:
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tc.id,
+                        "name": tc.name,
+                        "input": tc.arguments,
+                    })
+                messages.append({"role": "assistant", "content": assistant_content})
+            else:
+                # OpenAI
+                assistant_msg = {"role": "assistant", "content": text}
+                if tool_calls:
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                            },
+                        }
+                        for tc in tool_calls
+                    ]
+                messages.append(assistant_msg)
+
+            if tool_calls:
+                # 执行工具并追加结果
+                tool_results = []
+                for tc in tool_calls:
+                    if logger:
+                        logger.on_tool_call(tc)
+                    result = tool_registry.execute(tc)
+                    if logger:
+                        logger.on_tool_result(result)
+                    tool_results.append(result)
+                messages.extend(self._build_tool_result_messages(tool_results))
+            else:
+                # 无工具调用 = LLM 已给出最终审查结果，退出循环
+                break
+
+        return "".join(collected_texts)
+
+    # ── Chat / Agent 内部方法 ────────────────────────
+
+    def _build_chat_request_body(
+        self,
+        messages: list[dict],
+        tools: list[ToolDefinition],
+        system: str,
+    ) -> dict:
+        """按 provider 构建 tool-calling 请求体。"""
+        if self.provider == "anthropic":
+            return {
+                "model": self.model,
+                "max_tokens": 4096,
+                "system": system,
+                "messages": messages,
+                "tools": [
+                    {
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.parameters,
+                    }
+                    for t in tools
+                ],
+            }
+        else:
+            return {
+                "model": self.model,
+                "max_tokens": 4096,
+                "messages": messages,
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters,
+                        },
+                    }
+                    for t in tools
+                ],
+            }
+
+    def _send_chat_request(self, body: dict) -> dict:
+        """发送单轮 chat 请求，带重试。返回原始响应 dict。"""
+        last_error: Exception | None = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                if self.provider == "anthropic":
+                    return self._client.messages.create(**body)
+                else:
+                    return self._client.chat.completions.create(**body)
+            except Exception as e:
+                last_error = e
+                if not self._should_retry(e, attempt):
+                    raise self._wrap_error(e)
+                wait = 2 ** attempt
+                time.sleep(wait)
+
+        raise self._wrap_error(last_error)
+
+    def _parse_chat_response(self, response: dict) -> tuple[str | None, list[ToolCall]]:
+        """
+        解析 LLM 响应，提取文本和 tool_calls。
+
+        Returns:
+            (text_or_none, tool_calls_list)
+        """
+        if self.provider == "anthropic":
+            text_parts: list[str] = []
+            tool_calls: list[ToolCall] = []
+
+            for block in response.content:
+                if block.type == "text":
+                    text_parts.append(block.text)
+                elif block.type == "tool_use":
+                    tool_calls.append(ToolCall(
+                        id=block.id,
+                        name=block.name,
+                        arguments=block.input,
+                    ))
+
+            text = "".join(text_parts) if text_parts else None
+            return text, tool_calls
+        else:
+            choice = response.choices[0]
+            message = choice.message
+
+            text = message.content if message.content else None
+
+            tool_calls: list[ToolCall] = []
+            if message.tool_calls:
+                for tc in message.tool_calls:
+                    try:
+                        args = json.loads(tc.function.arguments)
+                    except json.JSONDecodeError:
+                        args = {}
+                    tool_calls.append(ToolCall(
+                        id=tc.id,
+                        name=tc.function.name,
+                        arguments=args,
+                    ))
+
+            return text, tool_calls
+
+    def _build_tool_result_messages(self, results: list[ToolResult]) -> list[dict]:
+        """将工具执行结果构建为追加到 messages 的消息列表。"""
+        if self.provider == "anthropic":
+            return [{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": r.tool_call_id,
+                        "content": r.content,
+                    }
+                    for r in results
+                ],
+            }]
+        else:
+            # OpenAI: 每个 tool_result 是一条独立的 role="tool" 消息
+            return [
+                {
+                    "role": "tool",
+                    "tool_call_id": r.tool_call_id,
+                    "content": r.content,
+                }
+                for r in results
+            ]
 
     # ── Anthropic ────────────────────────────────
 
