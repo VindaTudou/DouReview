@@ -1,13 +1,21 @@
 import json
 import time
 from collections.abc import Callable, Iterator
+from typing import Any
 from anthropic import Anthropic, APIStatusError, APITimeoutError, RateLimitError, AuthenticationError
+from anthropic.types import Message as AnthropicMessage
 from openai import OpenAI, APIStatusError as OAIStatusError, APITimeoutError as OAITimeoutError
 from openai import RateLimitError as OAIRateLimitError
 from openai import AuthenticationError as OAIAuthenticationError
+from openai.types.chat import ChatCompletion as OpenAIChatCompletion
 
 from .models import Prompt, ToolCall, ToolResult, ToolDefinition
+from .tools import ToolRegistry
+from .logger import VerboseLogger
 from .errors import LLMError, LLMAuthError, LLMRateLimitError
+
+# SDK 原始响应类型（Anthropic Message 或 OpenAI ChatCompletion）
+LLMResponse = AnthropicMessage | OpenAIChatCompletion
 
 
 class LLMClient:
@@ -93,7 +101,7 @@ class LLMClient:
         tool_registry: ToolRegistry,
         max_turns: int = 40,
         on_chunk: Callable[[str], None] | None = None,
-        logger: "VerboseLogger | None" = None,
+        logger: VerboseLogger | None = None,
     ) -> str:
         """
         Agent 循环 —— 多轮 tool-calling 对话，带分类预算和自适应退出。
@@ -165,7 +173,7 @@ class LLMClient:
                         logger.on_tool_call(tc)
                     result = tool_registry.execute(tc)
                     if logger:
-                        logger.on_tool_result(result)
+                        logger.on_tool_result(result, tool_name=tc.name)
                     tool_results.append(result)
                 messages.extend(self._build_tool_result_messages(tool_results))
             else:
@@ -181,7 +189,7 @@ class LLMClient:
         messages: list[dict],
         tools: list[ToolDefinition],
         system: str,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """按 provider 构建 tool-calling 请求体。"""
         if self.provider == "anthropic":
             return {
@@ -216,8 +224,8 @@ class LLMClient:
                 ],
             }
 
-    def _send_chat_request(self, body: dict) -> dict:
-        """发送单轮 chat 请求，带重试。返回原始响应 dict。"""
+    def _send_chat_request(self, body: dict[str, Any]) -> LLMResponse:
+        """发送单轮 chat 请求，带重试。返回 Anthropic Message 或 OpenAI ChatCompletion。"""
         last_error: Exception | None = None
 
         for attempt in range(self.max_retries + 1):
@@ -235,7 +243,7 @@ class LLMClient:
 
         raise self._wrap_error(last_error)
 
-    def _parse_chat_response(self, response: dict) -> tuple[str | None, list[ToolCall]]:
+    def _parse_chat_response(self, response: LLMResponse) -> tuple[str | None, list[ToolCall]]:
         """
         解析 LLM 响应，提取文本和 tool_calls。
 

@@ -6,6 +6,15 @@ from collections.abc import Callable
 from .models import ToolCall, ToolResult
 
 
+# 各工具的预览行数上限
+_PREVIEW_LINES: dict[str, int] = {
+    "read_file": 30,     # 完整文件，显示更多
+    "read_symbol": 20,   # 函数/类定义，适当显示
+    "search": 15,        # grep 结果，多显示几条
+    "list_dir": 50,      # 树状结构，尽量不截断
+}
+
+
 class VerboseLogger:
     """
     格式化并输出 Agent 的工具调用过程。
@@ -33,12 +42,16 @@ class VerboseLogger:
         args = json.dumps(call.arguments, ensure_ascii=False)
         self._emit(f"🔧 {call.name}({args})")
 
-    def on_tool_result(self, result: ToolResult) -> None:
+    def on_tool_result(self, result: ToolResult, tool_name: str = "") -> None:
         """工具执行完成后输出结果预览。"""
         text = result.content
-        if len(text) > 400:
-            lines = text.split("\n")[:8]
-            text = "\n".join(lines) + "\n   ...（已截断）"
+        max_lines = _PREVIEW_LINES.get(tool_name, 12)
+
+        lines = text.split("\n")
+        if len(lines) > max_lines:
+            text = "\n".join(lines[:max_lines]) + f"\n   ...（共 {len(lines)} 行，已截断）"
+        elif len(text) > 2000:
+            text = text[:2000] + "\n   ...（已截断）"
 
         preview = text.strip()
         if "\n" in preview:
